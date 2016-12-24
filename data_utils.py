@@ -253,7 +253,7 @@ def data_to_lines(raw_train_path_in, used_train_path_in, used_train_path_out, to
   with gfile.GFile(raw_train_path_in, mode="r") as raw_file:
     with gfile.GFile(used_train_path_in, mode="w") as in_file:
       with gfile.GFile(used_train_path_out, mode="w") as out_file:
-        for poem in f:
+        for poem in raw_file:
           lines = poem_to_lines(poem)
           for line in lines:
             in_file.write(line + "\n")
