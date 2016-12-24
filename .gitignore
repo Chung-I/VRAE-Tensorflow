@@ -1,2 +1,5 @@
 __pycache__
-poems
+poems/l5.train.txt.*
+poems/l5.valid.txt.*
+poems/vocab20000.*
+poems/vocab40000.*
