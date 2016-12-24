@@ -25,8 +25,7 @@ import numpy as np
 from six.moves import xrange  # pylint: disable=redefined-builtin
 import tensorflow as tf
 import seq2seq
-
-from tensorflow.models.rnn.translate import data_utils
+import data_utils
 
 
 class Seq2SeqModel(object):
@@ -174,15 +173,14 @@ class Seq2SeqModel(object):
                for i in xrange(len(self.decoder_inputs) - 1)]
 
     # Training outputs and losses.
-    if forward_only:
-      self.enc_mean, self.enc_logvar = encoder_with_buckets(
-          self.encoder_inputs, buckets, lambda x: encoder_f(x))
-      epsilon = tf.random_normal([self._batch_size, self._latent_dim])
-      self.latent_var = self.enc_mean + np.exp(0.5 * self.enc_logvar) * epsilon
-      self.outputs, self.losses = decoder_with_buckets(
-          self.latent_var, self.decoder_inputs, targets, self.target_weights,
-          buckets, lambda x: decoder_f(x),
-          softmax_loss_function=softmax_loss_function)
+    self.enc_mean, self.enc_logvar = seq2seq.encoder_with_buckets(
+        self.encoder_inputs, buckets, lambda x: encoder_f(x))
+    epsilon = tf.random_normal([self._batch_size, self._latent_dim])
+    self.latent_var = self.enc_mean + np.exp(0.5 * self.enc_logvar) * epsilon
+    self.outputs, self.losses = seq2seq.decoder_with_buckets(
+        self.latent_var, self.decoder_inputs, targets, self.target_weights,
+        buckets, lambda x: decoder_f(x),
+        softmax_loss_function=softmax_loss_function)
 
     # Gradients and SGD update operation for training the model.
     params = tf.trainable_variables()
