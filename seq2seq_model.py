@@ -133,12 +133,20 @@ class Seq2SeqModel(object):
         latent_dim=latent_dim,
         dtype=dtype)
 
-    def decoder_f(latent_inputs):
+    def decoder_f(latent_inputs, decoder_inputs):
       return seq2seq.variational_decoder(
         latent_inputs,
+        decoder_inputs,
         cell,
         num_decoder_symbols=target_vocab_size,
         embedding_size=size,
+        latent_dim=latent_dim,
+        dtype=dtype)
+
+    def sample_f(mean, logvar):
+      return seq2seq.sample(
+        mean, logvar,
+        batch_size=batch_size,
         latent_dim=latent_dim,
         dtype=dtype)
     # The seq2seq function: we use embedding for the input and attention.
@@ -173,13 +181,10 @@ class Seq2SeqModel(object):
                for i in xrange(len(self.decoder_inputs) - 1)]
 
     # Training outputs and losses.
-    self.enc_mean, self.enc_logvar = seq2seq.encoder_with_buckets(
-        self.encoder_inputs, buckets, lambda x: encoder_f(x))
-    epsilon = tf.random_normal([self._batch_size, self._latent_dim])
-    self.latent_var = self.enc_mean + np.exp(0.5 * self.enc_logvar) * epsilon
-    self.outputs, self.losses = seq2seq.decoder_with_buckets(
-        self.latent_var, self.decoder_inputs, targets, self.target_weights,
-        buckets, lambda x: decoder_f(x),
+    
+    self.outputs, self.losses = seq2seq.autoencoder_with_buckets(
+        self.encoder_inputs, self.decoder_inputs, targets, self.target_weights,
+        buckets, lambda x: encoder_f(x), lambda x, y: decoder_f(x, y), lambda mean, logvar: sample_f(mean, logvar),
         softmax_loss_function=softmax_loss_function)
 
     # Gradients and SGD update operation for training the model.

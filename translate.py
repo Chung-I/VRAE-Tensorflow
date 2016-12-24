@@ -38,10 +38,12 @@ import sys
 import time
 import logging
 import pdb
+import io
 
 import numpy as np
 from six.moves import xrange  # pylint: disable=redefined-builtin
 import tensorflow as tf
+from tensorflow.python.platform import gfile
 
 import data_utils
 import seq2seq_model
@@ -57,8 +59,8 @@ tf.app.flags.DEFINE_integer("batch_size", 64,
 tf.app.flags.DEFINE_integer("size", 1024, "Size of each model layer.")
 tf.app.flags.DEFINE_integer("latent_dim", 16, "dimension of latent space.")
 tf.app.flags.DEFINE_integer("num_layers", 3, "Number of layers in the model.")
-tf.app.flags.DEFINE_integer("in_vocab_size", 40000, "Input vocabulary size.")
-tf.app.flags.DEFINE_integer("out_vocab_size", 40000, "Output vocabulary size.")
+tf.app.flags.DEFINE_integer("in_vocab_size", 5000, "Input vocabulary size.")
+tf.app.flags.DEFINE_integer("out_vocab_size", 5000, "Output vocabulary size.")
 tf.app.flags.DEFINE_string("data_dir", "poems", "Data directory")
 tf.app.flags.DEFINE_string("train_dir", "models", "Training directory.")
 tf.app.flags.DEFINE_integer("max_train_data_size", 0,
@@ -141,7 +143,7 @@ def create_model(session, forward_only):
     model.saver.restore(session, ckpt.model_checkpoint_path)
   else:
     print("Created model with fresh parameters.")
-    session.run(tf.initialize_all_variables())
+    session.run(tf.global_variables_initializer())
   return model
 
 
@@ -224,26 +226,26 @@ def train():
 
 
 def decode():
+  input_stream = io.TextIOWrapper(sys.stdin.buffer, encoding='utf-8')
   with tf.Session() as sess:
     # Create model and load parameters.
     model = create_model(sess, True)
     model.batch_size = 1  # We decode one sentence at a time.
 
     # Load vocabularies.
-    en_vocab_path = os.path.join(FLAGS.data_dir,
-                                 "vocab%d.en" % FLAGS.in_vocab_size)
-    fr_vocab_path = os.path.join(FLAGS.data_dir,
-                                 "vocab%d.fr" % FLAGS.out_vocab_size)
-    en_vocab, _ = data_utils.initialize_vocabulary(en_vocab_path)
-    _, rev_fr_vocab = data_utils.initialize_vocabulary(fr_vocab_path)
+    in_vocab_path = os.path.join(FLAGS.data_dir,
+                                 "vocab%d.in" % FLAGS.in_vocab_size)
+    out_vocab_path = os.path.join(FLAGS.data_dir,
+                                 "vocab%d.out" % FLAGS.out_vocab_size)
+    in_vocab, _ = data_utils.initialize_vocabulary(in_vocab_path)
+    _, rev_out_vocab = data_utils.initialize_vocabulary(out_vocab_path)
 
     # Decode from standard input.
-    sys.stdout.write("> ")
-    sys.stdout.flush()
-    sentence = sys.stdin.readline()
-    while sentence:
+    with gfile.GFile("test.txt", "r") as f:
+      sentence = f.readline()
+    for _ in range(1):
       # Get token-ids for the input sentence.
-      token_ids = data_utils.sentence_to_token_ids(tf.compat.as_bytes(sentence), en_vocab)
+      token_ids = data_utils.sentence_to_token_ids(sentence, in_vocab)
       # Which bucket does it belong to?
       bucket_id = len(_buckets) - 1
       for i, bucket in enumerate(_buckets):
@@ -265,10 +267,11 @@ def decode():
       if data_utils.EOS_ID in outputs:
         outputs = outputs[:outputs.index(data_utils.EOS_ID)]
       # Print out French sentence corresponding to outputs.
-      print(" ".join([tf.compat.as_str(rev_fr_vocab[output]) for output in outputs]))
-      print("> ", end="")
-      sys.stdout.flush()
-      sentence = sys.stdin.readline()
+      with gfile.GFile("output.txt", "w") as f:
+        f.write(" ".join([rev_out_vocab[output] for output in outputs]))
+     # print("> ", end="")
+     # sys.stdout.flush()
+     # sentence = input_stream.readline()
 
 
 def self_test():

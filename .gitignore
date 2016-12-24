@@ -1,5 +1,8 @@
 __pycache__
 poems/l5.train.txt.*
 poems/l5.valid.txt.*
-poems/vocab20000.*
-poems/vocab40000.*
+poems/vocab*
+poems/vocab*
+models
+output.txt
+test.txt

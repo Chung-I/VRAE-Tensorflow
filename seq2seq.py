@@ -61,6 +61,7 @@ from __future__ import print_function
 from six.moves import xrange  # pylint: disable=redefined-builtin
 from six.moves import zip     # pylint: disable=redefined-builtin
 
+import tensorflow as tf
 from tensorflow.python import shape
 from tensorflow.python.framework import dtypes
 from tensorflow.python.framework import ops
@@ -1096,48 +1097,58 @@ def sequence_loss(logits, targets, weights,
     else:
       return cost
 
-def variational_decoder(latent_inputs, cell, num_decoder_symbols,
+
+def atomic_sample(mean_logvar, latent_dim):
+  epsilon = tf.random_normal([latent_dim])
+  mean, logvar = tf.split(0, 2, mean_logvar)
+  return tf.add(mean, tf.multiply(tf.exp(tf.multiply(0.5, logvar)), epsilon))
+
+def sample(mean, logvar, batch_size, latent_dim, dtype=None):
+  def atomic_sample_f(mean_logvar):
+    return atomic_sample(mean_logvar, latent_dim)
+  mean_logvar = tf.concat(1, [mean, logvar])
+  return tf.map_fn(lambda x: atomic_sample_f(x), mean_logvar)
+  
+
+def variational_decoder(latent_inputs, decoder_inputs, cell, num_decoder_symbols,
                       embedding_size, latent_dim, dtype=None, scope=None):
   with variable_scope.variable_scope(
       scope or "variational_decoder", dtype=dtype) as scope:
     dtype = scope.dtype
     with tf.variable_scope('latent_to_decoder'):
-      with tf.variable_scope('cell_state'):
-        w = tf.get_variable("w", [latent_dim, num_decoder_symbols],
-          dtype=dtype)
-        b = tf.get_variable("b", [dec_dim], dtype=dtype)
-        xw_b = tf.matmul(latent_inputs, w) + b
-        dec_initial_state_c = tf.nn.relu(xw_b)
-      with tf.variable_scope('hidden_state'):
-        w = tf.get_variable("w", [latent_dim, num_decoder_symbols],
-          dtype=data_type())
-        b = tf.get_variable("b", [dec_dim], dtype=data_type())
-        xw_b = tf.matmul(latent_inputs, w) + b
-        dec_initial_state_h = tf.nn.relu(xw_b)
+      w = tf.get_variable("w", [latent_dim, 3 * embedding_size],
+        dtype=dtype)
+      b = tf.get_variable("b", [3 * embedding_size], dtype=dtype)
+      xw_b = tf.matmul(latent_inputs, w) + b
+      dec_initial_state = tf.nn.relu(xw_b)
 
-    outputs = []
-    with tf.variable_scope("RNN"): #an RNNLM
-      state = (dec_initial_state_c, dec_initial_state_h)
-      word_input = tf.zeros([self._batch_size, self._vocab_size])
-      for time_step in range(self._seq_len):
-        if time_step > 0:
-          tf.get_variable_scope().reuse_variables()
-        input_embedding = tf.get_variable("input_embedding",
-          [self._vocab_size, self._enc_dim])
-        if(time_step == 0):
-          cell_input = tf.zeros([self._batch_size, self._enc_dim])
-        else:
-          cell_input = tf.matmul(word_input, input_embedding)
-        cell_output, state = cell(cell_input, state)
-        output_embedding = tf.get_variable("output_embedding",
-          [self._enc_dim, self._vocab_size])
-        word_output = tf.matmul(cell_output, output_embedding)
-        word_input = word_output
-        outputs.append(word_output)
+    dec_initial_state = tf.split(1, 3, dec_initial_state)
+
+  outputs, _ = embedding_rnn_decoder(decoder_inputs, dec_initial_state, cell,
+                                    num_decoder_symbols, embedding_size,
+                                    feed_previous=True)
+   # with tf.variable_scope("RNN"): #an RNNLM
+   #   state = (dec_initial_state_c, dec_initial_state_h)
+   #   word_input = tf.zeros([self._batch_size, self._vocab_size])
+   #   for time_step in range(self._seq_len):
+   #     if time_step > 0:
+   #       tf.get_variable_scope().reuse_variables()
+   #     input_embedding = tf.get_variable("input_embedding",
+   #       [self._vocab_size, embedding_size])
+   #     if(time_step == 0):
+   #       cell_input = tf.zeros([self._batch_size, embedding_size])
+   #     else:
+   #       cell_input = tf.matmul(word_input, input_embedding)
+   #     cell_output, state = cell(cell_input, state)
+   #     output_embedding = tf.get_variable("output_embedding",
+   #       [self._enc_dim, self._vocab_size])
+   #     word_output = tf.matmul(cell_output, output_embedding)
+   #     word_input = word_output
+   #     outputs.append(word_output)
 
   return outputs
 
-def variational_encoder(encoder_inputs, cell, num_encoder_symbols,
+def variational_encoder(encoder_inputs, encoder_cell, num_encoder_symbols,
                       embedding_size, latent_dim, dtype=None, scope=None):
   with variable_scope.variable_scope(
       scope or "variational_encoder", dtype=dtype) as scope:
@@ -1146,21 +1157,23 @@ def variational_encoder(encoder_inputs, cell, num_encoder_symbols,
     embedding = variable_scope.get_variable("encoder_embedding",
         [num_encoder_symbols, embedding_size], dtype=dtype)
 
-    encoder_inputs = [tf.nn.embedding_lookup(embedding, i) for i in encoder_inputs]    
-    encoder_outputs, encoder_state = tf.nn.rnn(
+    encoder_inputs = [embedding_ops.embedding_lookup(embedding, i) for i in encoder_inputs] 
+    encoder_outputs, encoder_state = rnn.rnn(
         encoder_cell, encoder_inputs, dtype=dtype)
+
+    concat_encoder_state = tf.concat(1, encoder_state)
 
     with tf.variable_scope('encoder_to_latent'):
       with tf.variable_scope('mean'):
-        w = tf.get_variable("w",[num_encoder_symbols, latent_dim],
+        w = tf.get_variable("w",[3 * embedding_size, latent_dim],
           dtype=dtype)
         b = tf.get_variable("b", [latent_dim], dtype=dtype)
-        mean = tf.nn.relu(tf.matmul(enc_final_state_c, w) + b)
+        mean = tf.nn.relu(tf.matmul(concat_encoder_state, w) + b)
       with tf.variable_scope('logvar'):
         w = tf.get_variable("w",
-          [num_encoder_symbols, latent_dim], dtype=dtype)
+          [3 * embedding_size, latent_dim], dtype=dtype)
         b = tf.get_variable("b", [latent_dim], dtype=dtype)
-        logvar = tf.nn.relu(tf.matmul(enc_final_state_c, w) + b)
+        logvar = tf.nn.relu(tf.matmul(concat_encoder_state, w) + b)
 
     return mean, logvar
 
@@ -1269,9 +1282,6 @@ def encoder_with_buckets(encoder_inputs, buckets, encoder, name=None):
     ValueError: If length of encoder_inputsut, targets, or weights is smaller
       than the largest (last) bucket.
   """
-  if len(encoder_inputs) < buckets[-1][0]:
-    raise ValueError("Length of encoder_inputs (%d) must be at least that of la"
-                     "st bucket (%d)." % (len(encoder_inputs), buckets[-1][0]))
 
   all_inputs = encoder_inputs
   means = []
@@ -1280,15 +1290,14 @@ def encoder_with_buckets(encoder_inputs, buckets, encoder, name=None):
     for j, bucket in enumerate(buckets):
       with variable_scope.variable_scope(variable_scope.get_variable_scope(),
                                          reuse=True if j > 0 else None):
-        bucket_mean, bucket_logvar = encoder(encoder_inputs[:bucket[0]])
         means.append(bucket_mean)
         logvars.append(bucket_logvar)
 
   return means, logvars
 
 
-def decoder_with_buckets(latent_inputs, decoder_inputs, targets, weights,
-                       buckets, decoder, softmax_loss_function=None,
+def autoencoder_with_buckets(encoder_inputs, decoder_inputs, targets, weights,
+                       buckets, encoder, decoder, sample, softmax_loss_function=None,
                        per_example_loss=False, name=None):
   """Create a sequence-to-sequence model with support for bucketing.
 
@@ -1324,6 +1333,9 @@ def decoder_with_buckets(latent_inputs, decoder_inputs, targets, weights,
     ValueError: If length of encoder_inputsut, targets, or weights is smaller
       than the largest (last) bucket.
   """
+  if len(encoder_inputs) < buckets[-1][0]:
+    raise ValueError("Length of encoder_inputs (%d) must be at least that of la"
+                     "st bucket (%d)." % (len(encoder_inputs), buckets[-1][0]))
   if len(targets) < buckets[-1][1]:
     raise ValueError("Length of targets (%d) must be at least that of last"
                      "bucket (%d)." % (len(targets), buckets[-1][1]))
@@ -1331,14 +1343,16 @@ def decoder_with_buckets(latent_inputs, decoder_inputs, targets, weights,
     raise ValueError("Length of weights (%d) must be at least that of last"
                      "bucket (%d)." % (len(weights), buckets[-1][1]))
 
-  all_inputs = latent_inputs + decoder_inputs + targets + weights
+  all_inputs = encoder_inputs + decoder_inputs + targets + weights
   losses = []
   outputs = []
   with ops.name_scope(name, "model_with_buckets", all_inputs):
     for j, bucket in enumerate(buckets):
       with variable_scope.variable_scope(variable_scope.get_variable_scope(),
                                          reuse=True if j > 0 else None):
-        bucket_outputs = decoder(latent_inputs) #bucket[0]之後就都是pad的東西了
+        bucket_mean, bucket_logvar = encoder(encoder_inputs[:bucket[0]])
+        latent_inputs = sample(bucket_mean, bucket_logvar)
+        bucket_outputs = decoder(latent_inputs, decoder_inputs[:bucket[1]]) #bucket[0]之後就都是pad的東西了
         outputs.append(bucket_outputs)
         if per_example_loss:
           losses.append(sequence_loss_by_example(
